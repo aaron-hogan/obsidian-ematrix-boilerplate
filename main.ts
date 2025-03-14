@@ -532,6 +532,9 @@ Use this note to organize your tasks by urgency and importance.
 	 * Creates Eisenhower Matrix content with tasks
 	 */
 	createEisenhowerMatrixContent(tasks: string[], title: string): string {
+		// Force settings for debugging
+		this.settings.showEisenhowerMatrix = true;
+		
 		// Categorize tasks
 		const urgentImportant: string[] = [];
 		const notUrgentImportant: string[] = [];
