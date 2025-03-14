@@ -4,12 +4,14 @@ interface EMatrixSettings {
 	mySetting: string;
 	placeholderText: string;
 	enableLogging: boolean;
+	showEisenhowerMatrix: boolean;
 }
 
 const DEFAULT_SETTINGS: EMatrixSettings = {
 	mySetting: 'default',
 	placeholderText: 'This note has been processed by EMatrix.',
-	enableLogging: true
+	enableLogging: true,
+	showEisenhowerMatrix: true
 }
 
 export default class EMatrixPlugin extends Plugin {
@@ -172,6 +174,17 @@ export default class EMatrixPlugin extends Plugin {
 					console.log(`EMatrix: Detected #ematrix tag in file: ${file.path}`);
 				}
 				
+				// Extract tasks from the content
+				const tasks = this.extractTasksFromContent(content);
+				
+				// Create the Eisenhower Matrix content
+				let replacementContent;
+				if (this.settings.showEisenhowerMatrix) {
+					replacementContent = this.createEisenhowerMatrixContent(tasks, file.basename);
+				} else {
+					replacementContent = this.settings.placeholderText;
+				}
+				
 				// Get the active view to check if this file is currently open
 				const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
 				
@@ -183,12 +196,12 @@ export default class EMatrixPlugin extends Plugin {
 					// Only replace if the content still contains #ematrix
 					if (currentContent.includes('#ematrix')) {
 						new Notice(`EMatrix processing: ${file.name}`);
-						editor.setValue(this.settings.placeholderText);
+						editor.setValue(replacementContent);
 					}
 				} else {
 					// If the file is not being edited, we can directly modify it
 					new Notice(`EMatrix processing: ${file.name}`);
-					await this.app.vault.modify(file, this.settings.placeholderText);
+					await this.app.vault.modify(file, replacementContent);
 				}
 				
 				if (this.settings.enableLogging) {
@@ -198,6 +211,156 @@ export default class EMatrixPlugin extends Plugin {
 		} catch (error) {
 			console.error(`EMatrix: Error processing file ${file.path}:`, error);
 		}
+	}
+	
+	/**
+	 * Extracts tasks from content string
+	 */
+	extractTasksFromContent(content: string): string[] {
+		const lines = content.split('\n');
+		const tasks: string[] = [];
+		
+		// Track indentation level to identify top-level tasks
+		let inList = false;
+		let previousIndent = 0;
+		
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+			
+			// Check if line contains a task
+			const taskMatch = line.match(/^(\s*)- \[([ x])\] (.+)$/);
+			
+			if (taskMatch) {
+				const indentation = taskMatch[1].length;
+				const isCompleted = taskMatch[2] === 'x';
+				const taskContent = taskMatch[3].trim();
+				
+				// Only include incomplete tasks
+				if (!isCompleted) {
+					// Reset tracking if we found a task with no indentation
+					if (indentation === 0) {
+						inList = true;
+						previousIndent = 0;
+						tasks.push(taskContent);
+					} 
+					// Only consider this a top-level task if the indentation is 0
+					// or if this is not within a list
+					else if (!inList) {
+						tasks.push(taskContent);
+						inList = true;
+						previousIndent = indentation;
+					}
+				}
+			} 
+			// If line starts with list marker but isn't a task
+			else if (line.match(/^\s*- /)) {
+				// Keep track of being in a list
+				inList = true;
+			}
+			// If line is empty or doesn't start with a list marker
+			else if (line.trim() === '' || !line.match(/^\s*- /)) {
+				// Reset list tracking when we're no longer in a list context
+				inList = false;
+				previousIndent = 0;
+			}
+		}
+		
+		return tasks;
+	}
+	
+	/**
+	 * Creates Eisenhower Matrix content with tasks
+	 */
+	createEisenhowerMatrixContent(tasks: string[], title: string): string {
+		// Categorize tasks
+		const urgentImportant: string[] = [];
+		const notUrgentImportant: string[] = [];
+		const urgentNotImportant: string[] = [];
+		const notUrgentNotImportant: string[] = [];
+		const backlog: string[] = [];
+		
+		// Simple categorization based on keywords
+		tasks.forEach(task => {
+			const taskLower = task.toLowerCase();
+			
+			if (taskLower.includes('#urgent') && taskLower.includes('#important')) {
+				urgentImportant.push(task.replace(/#urgent|#important/gi, '').trim());
+			} else if (taskLower.includes('#important')) {
+				notUrgentImportant.push(task.replace(/#important/gi, '').trim());
+			} else if (taskLower.includes('#urgent')) {
+				urgentNotImportant.push(task.replace(/#urgent/gi, '').trim());
+			} else if (taskLower.includes('#later')) {
+				notUrgentNotImportant.push(task.replace(/#later/gi, '').trim());
+			} else {
+				backlog.push(task);
+			}
+		});
+		
+		// Create task list HTML for a quadrant
+		const createTaskList = (tasks: string[], emptyMessage: string) => {
+			if (tasks.length === 0) {
+				return `<p class="empty-message">${emptyMessage}</p>`;
+			}
+			
+			return `<ul>${tasks.map(task => `<li>- [ ] ${task}</li>`).join('')}</ul>`;
+		};
+		
+		// Return the Markdown content with HTML for the Eisenhower Matrix
+		return `# ${title} - Eisenhower Matrix
+
+\`\`\`eisenhower-matrix
+## Eisenhower Matrix
+\`\`\`
+
+<div class="ematrix-container">
+  <div class="ematrix-header">
+    <div class="ematrix-header-empty"></div>
+    <div class="ematrix-header-urgent">Urgent</div>
+    <div class="ematrix-header-not-urgent">Not Urgent</div>
+  </div>
+  
+  <div class="ematrix-row">
+    <div class="ematrix-row-header">Important</div>
+    <div class="ematrix-quadrant urgent-important">
+      <h3>Do First</h3>
+      ${createTaskList(urgentImportant, 'No urgent and important tasks')}
+    </div>
+    <div class="ematrix-quadrant not-urgent-important">
+      <h3>Schedule</h3>
+      ${createTaskList(notUrgentImportant, 'No important tasks to schedule')}
+    </div>
+  </div>
+  
+  <div class="ematrix-row">
+    <div class="ematrix-row-header">Not Important</div>
+    <div class="ematrix-quadrant urgent-not-important">
+      <h3>Delegate</h3>
+      ${createTaskList(urgentNotImportant, 'No tasks to delegate')}
+    </div>
+    <div class="ematrix-quadrant not-urgent-not-important">
+      <h3>Eliminate</h3>
+      ${createTaskList(notUrgentNotImportant, 'No tasks to eliminate')}
+    </div>
+  </div>
+</div>
+
+## Backlog
+
+${backlog.map(task => `- [ ] ${task}`).join('\n')}
+
+<div class="ematrix-instructions">
+  <h3>Task Organization</h3>
+  <p>Use the following tags to organize tasks in the matrix:</p>
+  <ul>
+    <li><strong>#urgent #important</strong> - Do First quadrant</li>
+    <li><strong>#important</strong> - Schedule quadrant</li>
+    <li><strong>#urgent</strong> - Delegate quadrant</li>
+    <li><strong>#later</strong> - Eliminate quadrant</li>
+    <li>No tags - Tasks appear in Backlog</li>
+  </ul>
+</div>
+
+<!-- #ematrix -->`;
 	}
 
 	onunload() {
@@ -240,8 +403,18 @@ class EMatrixSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
+			.setName('Show Eisenhower Matrix')
+			.setDesc('Display tasks in an Eisenhower Matrix when #ematrix tag is present')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.showEisenhowerMatrix)
+				.onChange(async (value) => {
+					this.plugin.settings.showEisenhowerMatrix = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
 			.setName('Placeholder Text')
-			.setDesc('Text to replace note content when #ematrix is detected')
+			.setDesc('Text to replace note content when #ematrix is detected and Eisenhower Matrix is disabled')
 			.addTextArea(text => text
 				.setPlaceholder('Replacement text')
 				.setValue(this.plugin.settings.placeholderText)
@@ -272,12 +445,23 @@ class EMatrixSettingTab extends PluginSettingTab {
 				
 		containerEl.createEl('h3', {text: 'How to Use'});
 		const usageEl = containerEl.createEl('div', {cls: 'ematrix-usage'});
-		usageEl.createEl('p', {text: 'Add the tag #ematrix to any note to have its content replaced with the placeholder text above.'});
+		usageEl.createEl('p', {text: 'Add the tag #ematrix to any note to have its content replaced with an Eisenhower Matrix of your tasks.'});
 		usageEl.createEl('p', {text: 'The plugin processes notes when:'});
 		
 		const usageList = usageEl.createEl('ul');
 		usageList.createEl('li', {text: 'A note is opened'});
 		usageList.createEl('li', {text: 'A note is modified'});
 		usageList.createEl('li', {text: 'The "Process Current File with EMatrix" command is run'});
+		
+		containerEl.createEl('h3', {text: 'Eisenhower Matrix Task Organization'});
+		const matrixUsageEl = containerEl.createEl('div', {cls: 'ematrix-usage'});
+		matrixUsageEl.createEl('p', {text: 'Use the following tags to organize tasks in the matrix:'});
+		
+		const matrixUsageList = matrixUsageEl.createEl('ul');
+		matrixUsageList.createEl('li', {text: '#urgent #important - "Do First" quadrant (urgent and important)'});
+		matrixUsageList.createEl('li', {text: '#important - "Schedule" quadrant (not urgent but important)'});
+		matrixUsageList.createEl('li', {text: '#urgent - "Delegate" quadrant (urgent but not important)'});
+		matrixUsageList.createEl('li', {text: '#later - "Eliminate" quadrant (not urgent, not important)'});
+		matrixUsageList.createEl('li', {text: 'No tags - Tasks appear in the Backlog section'});
 	}
 }

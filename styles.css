@@ -1,5 +1,6 @@
 /* EMatrix Plugin Styles */
 
+/* Settings styles */
 .ematrix-usage {
   padding: 10px;
   margin-top: 10px;
@@ -14,4 +15,141 @@
 
 .ematrix-usage ul {
   margin-left: 20px;
+}
+
+/* Eisenhower Matrix styles */
+.ematrix-container {
+  display: grid;
+  grid-template-columns: 120px 1fr 1fr;
+  grid-template-rows: auto auto auto;
+  gap: 2px;
+  margin: 20px 0;
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 14px;
+}
+
+.ematrix-header {
+  display: contents;
+}
+
+.ematrix-header-empty {
+  background-color: var(--background-secondary);
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  font-weight: bold;
+  border-top-left-radius: 8px;
+}
+
+.ematrix-header-urgent,
+.ematrix-header-not-urgent {
+  background-color: var(--background-secondary);
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.ematrix-header-urgent {
+  grid-column: 2;
+  background-color: rgba(var(--color-red-rgb), 0.2);
+}
+
+.ematrix-header-not-urgent {
+  grid-column: 3;
+  background-color: rgba(var(--color-blue-rgb), 0.2);
+  border-top-right-radius: 8px;
+}
+
+.ematrix-row {
+  display: contents;
+}
+
+.ematrix-row-header {
+  background-color: var(--background-secondary);
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  font-weight: bold;
+  text-transform: uppercase;
+  writing-mode: vertical-lr;
+  transform: rotate(180deg);
+  letter-spacing: 1px;
+  min-height: 180px;
+}
+
+.ematrix-row:first-of-type .ematrix-row-header {
+  background-color: rgba(var(--color-green-rgb), 0.2);
+}
+
+.ematrix-row:last-of-type .ematrix-row-header {
+  background-color: rgba(var(--color-yellow-rgb), 0.2);
+  border-bottom-left-radius: 8px;
+}
+
+.ematrix-quadrant {
+  padding: 15px;
+  min-height: 180px;
+  background-color: var(--background-primary-alt);
+  display: flex;
+  flex-direction: column;
+}
+
+.ematrix-quadrant h3 {
+  margin: 0 0 10px 0;
+  font-size: 16px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: 5px;
+}
+
+.ematrix-quadrant ul {
+  margin: 0;
+  padding-left: 20px;
+  flex-grow: 1;
+}
+
+.ematrix-quadrant .empty-message {
+  color: var(--text-muted);
+  font-style: italic;
+  margin: 10px 0;
+}
+
+.urgent-important {
+  background-color: rgba(var(--color-red-rgb), 0.1);
+}
+
+.not-urgent-important {
+  background-color: rgba(var(--color-green-rgb), 0.1);
+  border-top-right-radius: 8px;
+}
+
+.urgent-not-important {
+  background-color: rgba(var(--color-yellow-rgb), 0.1);
+}
+
+.not-urgent-not-important {
+  background-color: rgba(var(--color-blue-rgb), 0.1);
+  border-bottom-right-radius: 8px;
+}
+
+.ematrix-instructions {
+  background-color: var(--background-secondary);
+  padding: 15px;
+  border-radius: 8px;
+  margin-top: 30px;
+  margin-bottom: 20px;
+}
+
+.ematrix-instructions h3 {
+  margin-top: 0;
 }
