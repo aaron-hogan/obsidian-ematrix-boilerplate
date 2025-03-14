@@ -1,0 +1,31 @@
+# Dependency directories
+node_modules/
+
+# Build output
+main.js
+*.js.map
+
+# IDE files
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# npm
+npm-debug.log
+.npm
+
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Obsidian
+.obsidian/
+data.json

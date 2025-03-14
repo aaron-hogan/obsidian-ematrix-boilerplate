@@ -1,0 +1,17 @@
+/* EMatrix Plugin Styles */
+
+.ematrix-usage {
+  padding: 10px;
+  margin-top: 10px;
+  border-radius: 5px;
+  background-color: var(--background-secondary);
+}
+
+.ematrix-usage p {
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.ematrix-usage ul {
+  margin-left: 20px;
+}
