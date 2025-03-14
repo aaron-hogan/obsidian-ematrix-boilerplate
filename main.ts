@@ -221,16 +221,22 @@ export default class EMatrixPlugin extends Plugin {
 					const editor = activeView.editor;
 					const currentContent = editor.getValue();
 					
-					// Only replace if the content still contains #ematrix and
-					// is not in the middle of typing the tag
+					// Check if the user is currently typing any tag
 					const cursorPos = editor.getCursor();
 					const lineText = editor.getLine(cursorPos.line);
-					const isTypingEmatrixTag = lineText.substring(0, cursorPos.ch).endsWith('#ematri') || 
-					                           lineText.substring(0, cursorPos.ch).endsWith('#ematrix');
 					
-					if (currentContent.includes('#ematrix') && !isTypingEmatrixTag) {
+					// Check for tag typing and editing in current line and surrounding lines
+					const isTypingAnyTag = this.isTypingTag(lineText, cursorPos.ch);
+					const isEditingNearbyTags = this.isEditingTagsNearby(editor, cursorPos);
+					
+					// Only process if we're not in the middle of typing or editing tags
+					if (currentContent.includes('#ematrix') && !isTypingAnyTag && !isEditingNearbyTags) {
 						new Notice(`EMatrix processing: ${file.name}`);
 						editor.setValue(replacementContent);
+					} else if (isTypingAnyTag || isEditingNearbyTags) {
+						if (this.settings.enableLogging) {
+							console.log(`EMatrix: Skipping processing as user is editing tags`);
+						}
 					}
 				} else {
 					// If the file is not being edited, we can directly modify it
@@ -248,8 +254,66 @@ export default class EMatrixPlugin extends Plugin {
 	}
 	
 	/**
-	 * Extracts tasks from content string
+	 * Checks if the user is currently typing a tag
+	 * This includes any tag, not just #ematrix
 	 */
+	isTypingTag(lineText: string, cursorPosition: number): boolean {
+		// Get the text up to the cursor
+		const textBeforeCursor = lineText.substring(0, cursorPosition);
+		
+		// Find the last # character before the cursor
+		const lastHashIndex = textBeforeCursor.lastIndexOf('#');
+		
+		// If there's no # or it's at the cursor position, not typing a tag
+		if (lastHashIndex === -1 || lastHashIndex === cursorPosition - 1) {
+			return false;
+		}
+		
+		// Extract the potential tag
+		const potentialTag = textBeforeCursor.substring(lastHashIndex);
+		
+		// Check if it looks like a tag (# followed by letters)
+		// and doesn't contain a space (which would indicate the tag is complete)
+		return /^#[a-zA-Z]*$/.test(potentialTag);
+	}
+	
+	/**
+	 * Checks if the user is editing tags in nearby lines
+	 * Looks at a few lines before and after the cursor
+	 */
+	isEditingTagsNearby(editor: Editor, cursorPos: {line: number, ch: number}): boolean {
+		const lineCount = editor.lineCount();
+		const startLine = Math.max(0, cursorPos.line - 2);
+		const endLine = Math.min(lineCount - 1, cursorPos.line + 2);
+		
+		// Check for task items with tags being edited
+		for (let i = startLine; i <= endLine; i++) {
+			const lineText = editor.getLine(i);
+			
+			// If this is a task item line
+			if (lineText.trim().startsWith('- [')) {
+				// Check for partially typed tags like #ur, #imp, etc.
+				// We're looking for something that looks like a tag in progress
+				const matches = lineText.match(/#[a-zA-Z]{1,6}(?!\w)/g);
+				
+				if (matches && matches.length > 0) {
+					// If we find short tags that might be incomplete, assume user is still typing
+					for (const match of matches) {
+						// Check for common tag prefixes
+						if (match.startsWith('#ur') || 
+							match.startsWith('#im') || 
+							match.startsWith('#la') || 
+							match.startsWith('#em')) {
+							return true;
+						}
+					}
+				}
+			}
+		}
+		
+		return false;
+	}
+	
 	extractTasksFromContent(content: string): string[] {
 		const lines = content.split('\n');
 		const tasks: string[] = [];
