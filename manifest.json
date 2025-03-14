@@ -1,7 +1,7 @@
 {
 	"id": "obsidian-ematrix-boilerplate",
 	"name": "Obsidian Plugin Boilerplate with Tag Processing",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"minAppVersion": "0.15.0",
 	"description": "A boilerplate for creating Obsidian plugins with tag-based content processing functionality.",
 	"author": "Aaron Hogan",
