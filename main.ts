@@ -20,6 +20,10 @@ export default class EMatrixPlugin extends Plugin {
 	settings: EMatrixSettings;
 	debouncedProcessFile: (file: TFile) => void;
 
+	// Track processing to prevent duplicate runs
+	private _lastProcessedTime: number = 0;
+	private _processingTimer: number | null = null;
+	
 	async onload() {
 		console.log('Initializing EMatrix plugin');
 		
@@ -29,58 +33,58 @@ export default class EMatrixPlugin extends Plugin {
 			console.log('EMatrix plugin loaded successfully');
 			new Notice('EMatrix plugin loaded');
 			
-			// Create a debounced version of processFile with appropriate delay
-			this.debouncedProcessFile = debounce(
-				(file: TFile) => {
-					if (this.settings.enableLogging) {
-						console.log("EMatrix: Processing file:", file.path);
-					}
-					this.processFile(file);
-				},
-				this.settings.debounceInterval,
-				true
-			);
-
-			// Register event to detect file open 
+			// Register event to detect file open - ONLY process if needed
 			this.registerEvent(
 				this.app.workspace.on('file-open', (file) => {
 					if (file instanceof TFile && file.extension === 'md') {
-						console.log("EMatrix DEBUG: File opened:", file.path);
 						// Check if the file has #ematrix tag first
 						this.app.vault.read(file).then(content => {
+							// Only process on open if it hasn't been processed yet
 							if (content.includes('#ematrix') && 
-							   !content.includes('```eisenhower-matrix')) {
-								// Only process on open if it hasn't been processed yet
+							   !content.includes('<div class="ematrix-container">')) {
+								console.log("EMatrix: Processing fresh file on open");
 								this.processFile(file);
 							}
 						});
 					}
 				})
 			);
-
-			// Register special handler for when user clicks outside of editor
-			this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-				// Check if we have an active markdown view
-				const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (activeView) {
-					// Process after user clicks somewhere else
-					console.log("EMatrix DEBUG: Document click detected, processing after delay");
-					setTimeout(() => {
-						const activeFile = this.app.workspace.getActiveFile();
-						if (activeFile && activeFile.extension === 'md') {
-							this.processFile(activeFile);
-						}
-					}, 500); // Short delay to let any other changes settle
-				}
-			});
-
-			// Register event to detect content change
+			
+			// No more click handler - this was causing duplicate processing
+			
+			// Register a more careful modify handler
 			this.registerEvent(
 				this.app.vault.on('modify', (file) => {
 					if (file instanceof TFile && file.extension === 'md') {
-						console.log("EMatrix DEBUG: File modified:", file.path);
-						// Use heavily debounced processing
-						this.debouncedProcessFile(file);
+						// Debounce processing with timestamp check to prevent duplicate runs
+						const now = Date.now();
+						if (now - this._lastProcessedTime < 10000) {
+							// Skip if we processed in the last 10 seconds
+							return;
+						}
+						
+						// Let's check if this file actually needs processing
+						this.app.vault.read(file).then(content => {
+							// Only schedule processing if we have tasks but not matrix
+							if (content.includes('#ematrix') && 
+								content.includes('- [ ]') && 
+								!content.includes('<div class="ematrix-container">')) {
+								
+								// Clear any previous timer
+								if (this._processingTimer) {
+									window.clearTimeout(this._processingTimer);
+									this._processingTimer = null;
+								}
+								
+								// Set new timer with much longer delay
+								this._processingTimer = window.setTimeout(() => {
+									console.log("EMatrix: Processing after task entry");
+									this._lastProcessedTime = Date.now();
+									this.processFile(file);
+									this._processingTimer = null;
+								}, 10000); // 10 second delay
+							}
+						});
 					}
 				})
 			);
@@ -272,29 +276,53 @@ Use this note to organize your tasks by urgency and importance.
 			
 			// Check if the content contains #ematrix
 			if (content.includes('#ematrix')) {
+				// Enable logging temporarily for debugging
+				const wasLoggingEnabled = this.settings.enableLogging;
+				this.settings.enableLogging = true;
+				
+				console.log(`EMatrix DEBUG: Processing file with content length: ${content.length}`);
+				console.log(`EMatrix DEBUG: Content has #ematrix tag: ${content.includes('#ematrix')}`);
+				console.log(`EMatrix DEBUG: Content has tasks: ${content.includes('- [ ]')}`);
+				
 				// Check if already processed to avoid redundant processing
 				const isAlreadyProcessed = content.includes('```eisenhower-matrix') && 
 										  content.includes('<div class="ematrix-container">');
+				
+				console.log(`EMatrix DEBUG: Already processed: ${isAlreadyProcessed}`);
 				
 				// Skip if the file is too small - likely still being created
 				const isTooSmall = content.length < 50;
 				
 				// Skip redundant processing if not needed
 				if (isAlreadyProcessed && !content.includes('- [ ]') && !content.includes('- [x]')) {
+					console.log(`EMatrix DEBUG: Skipping already processed file without new tasks`);
+					this.settings.enableLogging = wasLoggingEnabled;
 					return;
 				}
 				
 				if (isTooSmall) {
+					console.log(`EMatrix DEBUG: Skipping too small file`);
+					this.settings.enableLogging = wasLoggingEnabled;
 					return;
 				}
 				
 				// Extract tasks from the content
 				const tasks = this.extractTasksFromContent(content);
 				
+				console.log(`EMatrix DEBUG: Extracted ${tasks.length} tasks`);
+				for (const task of tasks) {
+					console.log(`EMatrix DEBUG: Task: "${task}"`);
+				}
+				
 				// Skip if no tasks found
 				if (tasks.length === 0) {
+					console.log(`EMatrix DEBUG: No tasks found, skipping`);
+					this.settings.enableLogging = wasLoggingEnabled;
 					return;
 				}
+				
+				// Restore logging setting
+				this.settings.enableLogging = wasLoggingEnabled;
 				
 				// Create the Eisenhower Matrix content
 				let replacementContent;
@@ -511,55 +539,56 @@ Use this note to organize your tasks by urgency and importance.
 		const notUrgentNotImportant: string[] = [];
 		const backlog: string[] = [];
 		
-		if (this.settings.enableLogging) {
-			console.log("EMatrix: Categorizing tasks into matrix quadrants");
-		}
+		// Enable logging for debugging
+		const wasLoggingEnabled = this.settings.enableLogging;
+		this.settings.enableLogging = true;
+		
+		console.log("EMatrix DEBUG: ---- Starting Task Categorization ----");
+		console.log(`EMatrix DEBUG: Total tasks to categorize: ${tasks.length}`);
 		
 		// More robust categorization based on keywords
-		tasks.forEach(task => {
-			const taskLower = task.toLowerCase();
+		tasks.forEach((task, index) => {
+			console.log(`EMatrix DEBUG: Processing task ${index + 1}/${tasks.length}: "${task}"`);
 			
 			// Use more robust tag detection
 			const hasUrgentTag = /#urgent\b/i.test(task);
 			const hasImportantTag = /#important\b/i.test(task);
 			const hasLaterTag = /#later\b/i.test(task);
 			
+			console.log(`EMatrix DEBUG: - Tags found: Urgent=${hasUrgentTag}, Important=${hasImportantTag}, Later=${hasLaterTag}`);
+			
 			// Clean the task text by removing all tags
 			let cleanTask = task.replace(/#[a-zA-Z0-9_-]+\b/g, '').trim();
 			
-			if (this.settings.enableLogging) {
-				console.log(`EMatrix: Processing task "${task}"`);
-				console.log(`  - Urgent: ${hasUrgentTag}, Important: ${hasImportantTag}, Later: ${hasLaterTag}`);
-				console.log(`  - Clean task: "${cleanTask}"`);
-			}
+			console.log(`EMatrix DEBUG: - Clean task text: "${cleanTask}"`);
 			
 			if (hasUrgentTag && hasImportantTag) {
 				urgentImportant.push(cleanTask);
-				if (this.settings.enableLogging) {
-					console.log(`  - Categorized as: Urgent & Important`);
-				}
+				console.log(`EMatrix DEBUG: - CATEGORIZED AS: Urgent & Important`);
 			} else if (hasImportantTag) {
 				notUrgentImportant.push(cleanTask);
-				if (this.settings.enableLogging) {
-					console.log(`  - Categorized as: Important (not urgent)`);
-				}
+				console.log(`EMatrix DEBUG: - CATEGORIZED AS: Important (not urgent)`);
 			} else if (hasUrgentTag) {
 				urgentNotImportant.push(cleanTask);
-				if (this.settings.enableLogging) {
-					console.log(`  - Categorized as: Urgent (not important)`);
-				}
+				console.log(`EMatrix DEBUG: - CATEGORIZED AS: Urgent (not important)`);
 			} else if (hasLaterTag) {
 				notUrgentNotImportant.push(cleanTask);
-				if (this.settings.enableLogging) {
-					console.log(`  - Categorized as: Later (not urgent, not important)`);
-				}
+				console.log(`EMatrix DEBUG: - CATEGORIZED AS: Later (not urgent, not important)`);
 			} else {
 				backlog.push(cleanTask);
-				if (this.settings.enableLogging) {
-					console.log(`  - Categorized as: Backlog (no tags)`);
-				}
+				console.log(`EMatrix DEBUG: - CATEGORIZED AS: Backlog (no tags)`);
 			}
 		});
+		
+		console.log("EMatrix DEBUG: ---- Task Categorization Results ----");
+		console.log(`EMatrix DEBUG: Urgent & Important: ${urgentImportant.length} tasks`);
+		console.log(`EMatrix DEBUG: Important (not urgent): ${notUrgentImportant.length} tasks`);
+		console.log(`EMatrix DEBUG: Urgent (not important): ${urgentNotImportant.length} tasks`);
+		console.log(`EMatrix DEBUG: Later: ${notUrgentNotImportant.length} tasks`);
+		console.log(`EMatrix DEBUG: Backlog: ${backlog.length} tasks`);
+		
+		// Restore logging setting
+		this.settings.enableLogging = wasLoggingEnabled;
 		
 		// Create task list HTML for a quadrant
 		const createTaskList = (tasks: string[], emptyMessage: string) => {
