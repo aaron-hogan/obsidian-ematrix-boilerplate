@@ -27,48 +27,61 @@ export default class EMatrixPlugin extends Plugin {
 			await this.loadSettings();
 			
 			console.log('EMatrix plugin loaded successfully');
-			new Notice('EMatrix plugin loaded successfully');
+			new Notice('EMatrix plugin loaded successfully - DEBUG MODE');
 			
-			// Create a debounced version of processFile with a much longer delay
-			// This ensures we only process after the user has stopped making changes for a while
+			// Force logging on for debugging
+			this.settings.enableLogging = true;
+			await this.saveSettings();
+			
+			// Create a debounced version of processFile that's more responsive for testing
 			this.debouncedProcessFile = debounce(
 				(file: TFile) => {
-					// Only process if there are no active editing sessions
-					const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-					if (!activeView || activeView.editor.hasFocus() === false) {
-						this.processFile(file);
-					} else if (this.settings.enableLogging) {
-						console.log("EMatrix: Skipping processing because editor is active");
-					}
+					console.log("EMatrix DEBUG: Debounced process triggering for file:", file.path);
+					this.processFile(file);
 				},
-				this.settings.debounceInterval * 2, // Double the debounce interval
+				3000, // Use 3 seconds for testing
 				true
 			);
 
-			// Register event to detect file open - but only process if it contains #ematrix tag
-			// and if it's not already been processed
+			// Register event to detect file open 
 			this.registerEvent(
 				this.app.workspace.on('file-open', (file) => {
 					if (file instanceof TFile && file.extension === 'md') {
-						// Check if the file has #ematrix tag first to avoid unnecessary processing
+						console.log("EMatrix DEBUG: File opened:", file.path);
+						// Check if the file has #ematrix tag first
 						this.app.vault.read(file).then(content => {
-							if (content.includes('#ematrix')) {
-								// Only process if the file doesn't already contain the matrix structure
-								if (!content.includes('```eisenhower-matrix') && !content.includes('<div class="ematrix-container">')) {
-									this.processFile(file);
-								}
+							if (content.includes('#ematrix') && 
+							   !content.includes('```eisenhower-matrix')) {
+								// Only process on open if it hasn't been processed yet
+								this.processFile(file);
 							}
 						});
 					}
 				})
 			);
 
-			// Register event to detect content change - use debounced version
-			// but only when the file is not in focus to avoid interfering with editing
+			// Register special handler for when user clicks outside of editor
+			this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
+				// Check if we have an active markdown view
+				const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+				if (activeView) {
+					// Process after user clicks somewhere else
+					console.log("EMatrix DEBUG: Document click detected, processing after delay");
+					setTimeout(() => {
+						const activeFile = this.app.workspace.getActiveFile();
+						if (activeFile && activeFile.extension === 'md') {
+							this.processFile(activeFile);
+						}
+					}, 500); // Short delay to let any other changes settle
+				}
+			});
+
+			// Register event to detect content change
 			this.registerEvent(
 				this.app.vault.on('modify', (file) => {
 					if (file instanceof TFile && file.extension === 'md') {
-						// Only process through debounce to avoid constant reprocessing
+						console.log("EMatrix DEBUG: File modified:", file.path);
+						// Use heavily debounced processing
 						this.debouncedProcessFile(file);
 					}
 				})
@@ -99,6 +112,22 @@ export default class EMatrixPlugin extends Plugin {
 						console.log('Extracted top-level tasks:', tasks);
 					} else {
 						new Notice('No top-level tasks found in the current note');
+					}
+				}
+			});
+			
+			// Add a debug command to force process the current file
+			this.addCommand({
+				id: 'force-process-ematrix',
+				name: 'DEBUG: Force Process with EMatrix',
+				callback: () => {
+					const activeFile = this.app.workspace.getActiveFile();
+					if (activeFile && activeFile.extension === 'md') {
+						console.log(`EMatrix DEBUG: Forcing processing on file ${activeFile.path}`);
+						new Notice(`Forcing EMatrix processing on: ${activeFile.name}`);
+						this.processFile(activeFile);
+					} else {
+						new Notice('No markdown file is currently open');
 					}
 				}
 			});
@@ -195,61 +224,40 @@ export default class EMatrixPlugin extends Plugin {
 
 	async processFile(file: TFile) {
 		try {
-			// First, check if the current file is being actively edited
-			const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-			const isActivelyEditing = activeView && 
-			                          activeView.file === file && 
-			                          activeView.editor.hasFocus();
-			
-			// Don't process if the user is actively editing the file
-			if (isActivelyEditing) {
-				if (this.settings.enableLogging) {
-					console.log(`EMatrix: Skipping processing as file is actively being edited: ${file.path}`);
-				}
-				return;
-			}
+			console.log(`EMatrix DEBUG: Starting processing for file: ${file.path}`);
 			
 			// Read the file content
 			const content = await this.app.vault.read(file);
 			
 			// Check if the content contains #ematrix
 			if (content.includes('#ematrix')) {
-				if (this.settings.enableLogging) {
-					console.log(`EMatrix: Detected #ematrix tag in file: ${file.path}`);
-				}
+				console.log(`EMatrix DEBUG: Detected #ematrix tag in file: ${file.path}`);
 				
-				// Skip if the file is too short - likely still being created
-				if (content.length < 50 && content.includes('- [ ]')) {
-					if (this.settings.enableLogging) {
-						console.log(`EMatrix: Skipping short file that's likely being created: ${file.path}`);
-					}
+				// Check if already processed to avoid redundant processing
+				const isAlreadyProcessed = content.includes('```eisenhower-matrix') && 
+										  content.includes('<div class="ematrix-container">');
+				
+				// Skip if the file is too small - likely still being created
+				const isTooSmall = content.length < 50;
+				
+				if (isAlreadyProcessed && !content.includes('- [ ]') && !content.includes('- [x]')) {
+					console.log(`EMatrix DEBUG: File appears to be already processed without new tasks. Skipping.`);
 					return;
 				}
 				
-				// Check if the file has already been processed
-				// Look for the Eisenhower Matrix heading and structure
-				const isAlreadyProcessed = content.includes('```eisenhower-matrix') && 
-				                           content.includes('<div class="ematrix-container">');
-				
-				// Check for tasks in the content
-				const containsUnprocessedTasks = content.includes('- [ ]') || content.includes('- [x]');
-				
-				// Skip processing if the file is already in matrix form and doesn't need updating
-				if (isAlreadyProcessed && !containsUnprocessedTasks) {
-					if (this.settings.enableLogging) {
-						console.log(`EMatrix: Skipping already processed file: ${file.path}`);
-					}
+				if (isTooSmall) {
+					console.log(`EMatrix DEBUG: File is too small, might be in creation. Skipping.`);
 					return;
 				}
 				
 				// Extract tasks from the content
 				const tasks = this.extractTasksFromContent(content);
 				
-				// Skip if no tasks were found
+				console.log(`EMatrix DEBUG: Extracted ${tasks.length} tasks from file: ${file.path}`);
+				
+				// Skip if no tasks found
 				if (tasks.length === 0) {
-					if (this.settings.enableLogging) {
-						console.log(`EMatrix: No tasks found, skipping processing: ${file.path}`);
-					}
+					console.log(`EMatrix DEBUG: No tasks found in file. Skipping.`);
 					return;
 				}
 				
@@ -261,48 +269,53 @@ export default class EMatrixPlugin extends Plugin {
 					replacementContent = this.settings.placeholderText;
 				}
 				
-				// Check if the file is currently open
+				// Get the active view to check if this file is currently open
+				const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+				
 				if (activeView && activeView.file === file) {
-					// If the file is open but not in focus, we can update it
+					// If the file is currently being edited, we need to update the editor
 					const editor = activeView.editor;
-					const currentContent = editor.getValue();
+					console.log(`EMatrix DEBUG: File is open in editor. Will update it.`);
 					
-					// Additional checks to prevent unwanted processing
-					const isTypingAnyTag = this.isTypingTag(editor.getLine(editor.getCursor().line), editor.getCursor().ch);
-					const isEditingNearbyTags = this.isEditingTagsNearby(editor, editor.getCursor());
+					// Check if we should skip processing by seeing if any editor is focused
+					const allEditors = document.querySelectorAll('.cm-editor');
+					let hasFocusedEditor = false;
+					allEditors.forEach(editorEl => {
+						if (editorEl.contains(document.activeElement)) {
+							hasFocusedEditor = true;
+						}
+					});
 					
-					// Only process if we're not in the middle of typing or editing tags and not focused
-					if (currentContent.includes('#ematrix') && !isTypingAnyTag && !isEditingNearbyTags && !editor.hasFocus()) {
-						// One last check to make sure we're not disrupting the user
-						if (!this.isAddingTasks(currentContent, replacementContent)) {
-							new Notice(`EMatrix processing: ${file.name}`);
-							editor.setValue(replacementContent);
-							
-							if (this.settings.enableLogging) {
-								console.log(`EMatrix: Replaced content in open file: ${file.path}`);
-							}
-						} else {
-							if (this.settings.enableLogging) {
-								console.log(`EMatrix: Detected task changes, skipping to avoid disrupting user: ${file.path}`);
-							}
-						}
-					} else {
-						if (this.settings.enableLogging) {
-							console.log(`EMatrix: Skipping processing as user might be editing: ${file.path}`);
-						}
+					if (hasFocusedEditor) {
+						console.log(`EMatrix DEBUG: Editor has focus, skipping to avoid disrupting user.`);
+						return;
 					}
+					
+					new Notice(`EMatrix processing: ${file.name}`);
+					editor.setValue(replacementContent);
+					
+					// Try to restore cursor position to a reasonable place
+					try {
+						// Set cursor to a reasonable position - near a task if possible
+						editor.setCursor({ line: 20, ch: 0 });
+					} catch (err) {
+						console.log(`EMatrix DEBUG: Error setting cursor:`, err);
+					}
+					
+					console.log(`EMatrix DEBUG: Replaced content in open file: ${file.path}`);
 				} else {
 					// If the file is not being edited, we can directly modify it
+					console.log(`EMatrix DEBUG: File is not open. Will modify directly.`);
+					
 					new Notice(`EMatrix processing: ${file.name}`);
 					await this.app.vault.modify(file, replacementContent);
-					
-					if (this.settings.enableLogging) {
-						console.log(`EMatrix: Replaced content in closed file: ${file.path}`);
-					}
+					console.log(`EMatrix DEBUG: Replaced content in file: ${file.path}`);
 				}
+			} else {
+				console.log(`EMatrix DEBUG: File does not contain #ematrix tag: ${file.path}`);
 			}
 		} catch (error) {
-			console.error(`EMatrix: Error processing file ${file.path}:`, error);
+			console.error(`EMatrix DEBUG: Error processing file ${file.path}:`, error);
 		}
 	}
 	
