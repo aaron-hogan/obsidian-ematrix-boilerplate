@@ -322,6 +322,10 @@ export default class EMatrixPlugin extends Plugin {
 		let inList = false;
 		let previousIndent = 0;
 		
+		if (this.settings.enableLogging) {
+			console.log("EMatrix: Starting task extraction");
+		}
+		
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
 			
@@ -340,6 +344,9 @@ export default class EMatrixPlugin extends Plugin {
 						inList = true;
 						previousIndent = 0;
 						tasks.push(taskContent);
+						if (this.settings.enableLogging) {
+							console.log(`EMatrix: Extracted task: "${taskContent}"`);
+						}
 					} 
 					// Only consider this a top-level task if the indentation is 0
 					// or if this is not within a list
@@ -347,6 +354,9 @@ export default class EMatrixPlugin extends Plugin {
 						tasks.push(taskContent);
 						inList = true;
 						previousIndent = indentation;
+						if (this.settings.enableLogging) {
+							console.log(`EMatrix: Extracted task: "${taskContent}"`);
+						}
 					}
 				}
 			} 
@@ -363,6 +373,10 @@ export default class EMatrixPlugin extends Plugin {
 			}
 		}
 		
+		if (this.settings.enableLogging) {
+			console.log(`EMatrix: Extracted ${tasks.length} tasks total`);
+		}
+		
 		return tasks;
 	}
 	
@@ -377,20 +391,53 @@ export default class EMatrixPlugin extends Plugin {
 		const notUrgentNotImportant: string[] = [];
 		const backlog: string[] = [];
 		
-		// Simple categorization based on keywords
+		if (this.settings.enableLogging) {
+			console.log("EMatrix: Categorizing tasks into matrix quadrants");
+		}
+		
+		// More robust categorization based on keywords
 		tasks.forEach(task => {
 			const taskLower = task.toLowerCase();
 			
-			if (taskLower.includes('#urgent') && taskLower.includes('#important')) {
-				urgentImportant.push(task.replace(/#urgent|#important/gi, '').trim());
-			} else if (taskLower.includes('#important')) {
-				notUrgentImportant.push(task.replace(/#important/gi, '').trim());
-			} else if (taskLower.includes('#urgent')) {
-				urgentNotImportant.push(task.replace(/#urgent/gi, '').trim());
-			} else if (taskLower.includes('#later')) {
-				notUrgentNotImportant.push(task.replace(/#later/gi, '').trim());
+			// Use more robust tag detection
+			const hasUrgentTag = /#urgent\b/i.test(task);
+			const hasImportantTag = /#important\b/i.test(task);
+			const hasLaterTag = /#later\b/i.test(task);
+			
+			// Clean the task text by removing all tags
+			let cleanTask = task.replace(/#[a-zA-Z0-9_-]+\b/g, '').trim();
+			
+			if (this.settings.enableLogging) {
+				console.log(`EMatrix: Processing task "${task}"`);
+				console.log(`  - Urgent: ${hasUrgentTag}, Important: ${hasImportantTag}, Later: ${hasLaterTag}`);
+				console.log(`  - Clean task: "${cleanTask}"`);
+			}
+			
+			if (hasUrgentTag && hasImportantTag) {
+				urgentImportant.push(cleanTask);
+				if (this.settings.enableLogging) {
+					console.log(`  - Categorized as: Urgent & Important`);
+				}
+			} else if (hasImportantTag) {
+				notUrgentImportant.push(cleanTask);
+				if (this.settings.enableLogging) {
+					console.log(`  - Categorized as: Important (not urgent)`);
+				}
+			} else if (hasUrgentTag) {
+				urgentNotImportant.push(cleanTask);
+				if (this.settings.enableLogging) {
+					console.log(`  - Categorized as: Urgent (not important)`);
+				}
+			} else if (hasLaterTag) {
+				notUrgentNotImportant.push(cleanTask);
+				if (this.settings.enableLogging) {
+					console.log(`  - Categorized as: Later (not urgent, not important)`);
+				}
 			} else {
-				backlog.push(task);
+				backlog.push(cleanTask);
+				if (this.settings.enableLogging) {
+					console.log(`  - Categorized as: Backlog (no tags)`);
+				}
 			}
 		});
 		
