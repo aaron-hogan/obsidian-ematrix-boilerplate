@@ -56,6 +56,21 @@ export default class EMatrixPlugin extends Plugin {
 				}
 			});
 
+			// Add a command to extract top-level tasks
+			this.addCommand({
+				id: 'extract-top-level-tasks',
+				name: 'Extract Top-Level Tasks',
+				callback: () => {
+					const tasks = this.extractTopLevelTasks();
+					if (tasks.length > 0) {
+						new Notice(`Extracted ${tasks.length} top-level tasks`);
+						console.log('Extracted top-level tasks:', tasks);
+					} else {
+						new Notice('No top-level tasks found in the current note');
+					}
+				}
+			});
+
 			// Add a command to confirm plugin is working
 			this.addCommand({
 				id: 'show-ematrix-notice',
@@ -70,6 +85,79 @@ export default class EMatrixPlugin extends Plugin {
 		} catch (error) {
 			console.error('Error loading EMatrix plugin:', error);
 			new Notice('Error loading EMatrix plugin: ' + error.message);
+		}
+	}
+	
+	/**
+	 * Extracts top-level tasks from the active note
+	 * Only captures tasks at the root level, ignoring nested subtasks
+	 * @returns An array of task strings without the checkbox markdown
+	 */
+	extractTopLevelTasks(): string[] {
+		try {
+			const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+			if (!activeView) {
+				console.log('No active markdown view found');
+				return [];
+			}
+			
+			const editor = activeView.editor;
+			const content = editor.getValue();
+			
+			// Split content into lines
+			const lines = content.split('\n');
+			const tasks: string[] = [];
+			
+			// Track indentation level to identify top-level tasks
+			let inList = false;
+			let previousIndent = 0;
+			
+			for (let i = 0; i < lines.length; i++) {
+				const line = lines[i];
+				
+				// Check if line contains a task
+				const taskMatch = line.match(/^(\s*)- \[([ x])\] (.+)$/);
+				
+				if (taskMatch) {
+					const indentation = taskMatch[1].length;
+					const taskContent = taskMatch[3].trim();
+					
+					// Reset tracking if we found a task with no indentation
+					if (indentation === 0) {
+						inList = true;
+						previousIndent = 0;
+						tasks.push(taskContent);
+					} 
+					// Only consider this a top-level task if the indentation is 0
+					// or if this is not within a list
+					else if (!inList) {
+						tasks.push(taskContent);
+						inList = true;
+						previousIndent = indentation;
+					}
+				} 
+				// If line starts with list marker but isn't a task
+				else if (line.match(/^\s*- /)) {
+					// Keep track of being in a list
+					inList = true;
+				}
+				// If line is empty or doesn't start with a list marker
+				else if (line.trim() === '' || !line.match(/^\s*- /)) {
+					// Reset list tracking when we're no longer in a list context
+					inList = false;
+					previousIndent = 0;
+				}
+			}
+			
+			if (this.settings.enableLogging) {
+				console.log(`EMatrix: Extracted ${tasks.length} top-level tasks`);
+			}
+			
+			return tasks;
+		} catch (error) {
+			console.error('Error extracting tasks:', error);
+			new Notice('Error extracting tasks: ' + error.message);
+			return [];
 		}
 	}
 
