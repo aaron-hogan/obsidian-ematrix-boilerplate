@@ -1,21 +1,24 @@
-import { App, Plugin, PluginSettingTab, Setting, Notice, TFile, MarkdownView, Editor } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, Notice, TFile, MarkdownView, Editor, debounce } from 'obsidian';
 
 interface EMatrixSettings {
 	mySetting: string;
 	placeholderText: string;
 	enableLogging: boolean;
 	showEisenhowerMatrix: boolean;
+	debounceInterval: number;
 }
 
 const DEFAULT_SETTINGS: EMatrixSettings = {
 	mySetting: 'default',
 	placeholderText: 'This note has been processed by EMatrix.',
 	enableLogging: true,
-	showEisenhowerMatrix: true
+	showEisenhowerMatrix: true,
+	debounceInterval: 2000 // 2 seconds
 }
 
 export default class EMatrixPlugin extends Plugin {
 	settings: EMatrixSettings;
+	debouncedProcessFile: (file: TFile) => void;
 
 	async onload() {
 		console.log('Initializing EMatrix plugin');
@@ -25,8 +28,17 @@ export default class EMatrixPlugin extends Plugin {
 			
 			console.log('EMatrix plugin loaded successfully');
 			new Notice('EMatrix plugin loaded successfully');
+			
+			// Create a debounced version of processFile
+			this.debouncedProcessFile = debounce(
+				(file: TFile) => {
+					this.processFile(file);
+				},
+				this.settings.debounceInterval,
+				true
+			);
 
-			// Register event to detect file open
+			// Register event to detect file open - no debounce needed here
 			this.registerEvent(
 				this.app.workspace.on('file-open', (file) => {
 					if (file instanceof TFile && file.extension === 'md') {
@@ -35,16 +47,16 @@ export default class EMatrixPlugin extends Plugin {
 				})
 			);
 
-			// Register event to detect content change
+			// Register event to detect content change - use debounced version
 			this.registerEvent(
 				this.app.vault.on('modify', (file) => {
 					if (file instanceof TFile && file.extension === 'md') {
-						this.processFile(file);
+						this.debouncedProcessFile(file);
 					}
 				})
 			);
 
-			// Add a command to process the current file
+			// Add a command to process the current file - no debounce needed for manual trigger
 			this.addCommand({
 				id: 'process-current-file',
 				name: 'Process Current File with EMatrix',
@@ -174,6 +186,22 @@ export default class EMatrixPlugin extends Plugin {
 					console.log(`EMatrix: Detected #ematrix tag in file: ${file.path}`);
 				}
 				
+				// Check if the file has already been processed
+				// Look for the Eisenhower Matrix heading and structure
+				const isAlreadyProcessed = content.includes('```eisenhower-matrix') && 
+				                           content.includes('<div class="ematrix-container">');
+				
+				// Skip processing if the file is already in matrix form
+				// unless it contains tasks that need to be processed
+				const containsUnprocessedTasks = content.includes('- [ ]') || content.includes('- [x]');
+				
+				if (isAlreadyProcessed && !containsUnprocessedTasks) {
+					if (this.settings.enableLogging) {
+						console.log(`EMatrix: Skipping already processed file: ${file.path}`);
+					}
+					return;
+				}
+				
 				// Extract tasks from the content
 				const tasks = this.extractTasksFromContent(content);
 				
@@ -193,8 +221,14 @@ export default class EMatrixPlugin extends Plugin {
 					const editor = activeView.editor;
 					const currentContent = editor.getValue();
 					
-					// Only replace if the content still contains #ematrix
-					if (currentContent.includes('#ematrix')) {
+					// Only replace if the content still contains #ematrix and
+					// is not in the middle of typing the tag
+					const cursorPos = editor.getCursor();
+					const lineText = editor.getLine(cursorPos.line);
+					const isTypingEmatrixTag = lineText.substring(0, cursorPos.ch).endsWith('#ematri') || 
+					                           lineText.substring(0, cursorPos.ch).endsWith('#ematrix');
+					
+					if (currentContent.includes('#ematrix') && !isTypingEmatrixTag) {
 						new Notice(`EMatrix processing: ${file.name}`);
 						editor.setValue(replacementContent);
 					}
@@ -442,6 +476,48 @@ class EMatrixSettingTab extends PluginSettingTab {
 					this.plugin.settings.enableLogging = value;
 					await this.plugin.saveSettings();
 				}));
+				
+		new Setting(containerEl)
+			.setName('Debounce Interval')
+			.setDesc('The time (in milliseconds) to wait after typing before processing the note. Higher values reduce processing during typing but increase delay.')
+			.addSlider(slider => slider
+				.setLimits(500, 5000, 500)
+				.setValue(this.plugin.settings.debounceInterval)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					this.plugin.settings.debounceInterval = value;
+					
+					// Update the debounced function with the new interval
+					this.plugin.debouncedProcessFile = debounce(
+						(file: TFile) => {
+							this.plugin.processFile(file);
+						},
+						this.plugin.settings.debounceInterval,
+						true
+					);
+					
+					await this.plugin.saveSettings();
+				}))
+			.addExtraButton(button => {
+				button
+					.setIcon('reset')
+					.setTooltip('Reset to default (2000ms)')
+					.onClick(async () => {
+						this.plugin.settings.debounceInterval = DEFAULT_SETTINGS.debounceInterval;
+						
+						// Update the debounced function with the default interval
+						this.plugin.debouncedProcessFile = debounce(
+							(file: TFile) => {
+								this.plugin.processFile(file);
+							},
+							this.plugin.settings.debounceInterval,
+							true
+						);
+						
+						await this.plugin.saveSettings();
+						this.display();
+					});
+			});
 				
 		containerEl.createEl('h3', {text: 'How to Use'});
 		const usageEl = containerEl.createEl('div', {cls: 'ematrix-usage'});
